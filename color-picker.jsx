@@ -766,7 +766,7 @@ const ColorPalettes = ({ hue, saturation, lightness, baseColor }) => {
                 <div className="text-xs text-gray-400 font-mono">{color.hex}</div>
               </div>
             )}
-          </div>
+            </div>
           );
         })}
       </div>
