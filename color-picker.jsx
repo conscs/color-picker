@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Copy, Check } from 'lucide-react';
 
 const ColorPicker = () => {
   const [hue, setHue] = useState(180);
   const [saturation, setSaturation] = useState(100);
-  const [lightness, setLightness] = useState(50);
+  const [value, setValue] = useState(50);
   const [alpha, setAlpha] = useState(100);
   const [copiedFormat, setCopiedFormat] = useState(null);
   const [animateFormat, setAnimateFormat] = useState(null);
@@ -13,18 +13,137 @@ const ColorPicker = () => {
   const [isDraggingLightness, setIsDraggingLightness] = useState(false);
   const [isDraggingAlpha, setIsDraggingAlpha] = useState(false);
 
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
   // Convert HSL to RGB
   const hslToRgb = (h, s, l) => {
-    s /= 100;
-    l /= 100;
-    const k = n => (n + h / 30) % 12;
-    const a = s * Math.min(l, 1 - l);
-    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    const hNorm = h / 360;
+    const sNorm = s / 100;
+    const lNorm = l / 100;
+    
+    const c = (1 - Math.abs(2 * lNorm - 1)) * sNorm;
+    const x = c * (1 - Math.abs((hNorm * 6) % 2 - 1));
+    const m = lNorm - c / 2;
+    
+    let r, g, b;
+    
+    if (hNorm >= 0 && hNorm < 1/6) {
+      r = c; g = x; b = 0;
+    } else if (hNorm >= 1/6 && hNorm < 2/6) {
+      r = x; g = c; b = 0;
+    } else if (hNorm >= 2/6 && hNorm < 3/6) {
+      r = 0; g = c; b = x;
+    } else if (hNorm >= 3/6 && hNorm < 4/6) {
+      r = 0; g = x; b = c;
+    } else if (hNorm >= 4/6 && hNorm < 5/6) {
+      r = x; g = 0; b = c;
+    } else {
+      r = c; g = 0; b = x;
+    }
+    
     return [
-      Math.round(255 * f(0)),
-      Math.round(255 * f(8)),
-      Math.round(255 * f(4))
+      Math.round(255 * (r + m)),
+      Math.round(255 * (g + m)),
+      Math.round(255 * (b + m))
     ];
+  };
+
+  const hsvToRgb = (h, s, v) => {
+    const hNorm = ((h % 360) + 360) % 360;
+    const sNorm = clamp(s, 0, 100) / 100;
+    const vNorm = clamp(v, 0, 100) / 100;
+    const c = vNorm * sNorm;
+    const hPrime = hNorm / 60;
+    const x = c * (1 - Math.abs((hPrime % 2) - 1));
+    let r1 = 0, g1 = 0, b1 = 0;
+
+    if (hPrime >= 0 && hPrime < 1) {
+      r1 = c; g1 = x; b1 = 0;
+    } else if (hPrime >= 1 && hPrime < 2) {
+      r1 = x; g1 = c; b1 = 0;
+    } else if (hPrime >= 2 && hPrime < 3) {
+      r1 = 0; g1 = c; b1 = x;
+    } else if (hPrime >= 3 && hPrime < 4) {
+      r1 = 0; g1 = x; b1 = c;
+    } else if (hPrime >= 4 && hPrime < 5) {
+      r1 = x; g1 = 0; b1 = c;
+    } else {
+      r1 = c; g1 = 0; b1 = x;
+    }
+
+    const m = vNorm - c;
+    return [
+      Math.round((r1 + m) * 255),
+      Math.round((g1 + m) * 255),
+      Math.round((b1 + m) * 255)
+    ];
+  };
+
+  const rgbToHsv = (r, g, b) => {
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
+    const max = Math.max(rNorm, gNorm, bNorm);
+    const min = Math.min(rNorm, gNorm, bNorm);
+    const delta = max - min;
+
+    let h = 0;
+    if (delta !== 0) {
+      if (max === rNorm) {
+        h = ((gNorm - bNorm) / delta) % 6;
+      } else if (max === gNorm) {
+        h = (bNorm - rNorm) / delta + 2;
+      } else {
+        h = (rNorm - gNorm) / delta + 4;
+      }
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+
+    const s = max === 0 ? 0 : delta / max;
+    const v = max;
+
+    return {
+      h,
+      s: clamp(s * 100, 0, 100),
+      v: clamp(v * 100, 0, 100)
+    };
+  };
+
+  const rgbToHsl = (r, g, b) => {
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
+    const max = Math.max(rNorm, gNorm, bNorm);
+    const min = Math.min(rNorm, gNorm, bNorm);
+    let h = 0;
+    let s = 0;
+    const l = (max + min) / 2;
+
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case rNorm:
+          h = (gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0);
+          break;
+        case gNorm:
+          h = (bNorm - rNorm) / d + 2;
+          break;
+        case bNorm:
+          h = (rNorm - gNorm) / d + 4;
+          break;
+        default:
+          h = 0;
+      }
+      h /= 6;
+    }
+
+    return {
+      h: (h * 360 + 360) % 360,
+      s: Math.min(Math.max(s * 100, 0), 100),
+      l: Math.min(Math.max(l * 100, 0), 100)
+    };
   };
 
   // RGB to Hex
@@ -117,101 +236,234 @@ const ColorPicker = () => {
     return (lighter + 0.05) / (darker + 0.05);
   };
 
-  const rgb = hslToRgb(hue, saturation, lightness);
+  const rgb = hsvToRgb(hue, saturation, value);
+  const { h: hslHue, s: hslSaturation, l: hslLightness } = rgbToHsl(...rgb);
   const hex = rgbToHex(...rgb);
   const xyz = rgbToXyz(...rgb);
   const lab = xyzToLab(xyz.x, xyz.y, xyz.z);
   const lch = labToLch(lab.l, lab.a, lab.b);
   const oklch = rgbToOklch(...rgb);
-  
-  // Parse background color
-  const parseBgColor = (color) => {
-    const temp = document.createElement('div');
-    temp.style.color = color;
-    document.body.appendChild(temp);
-    const computed = window.getComputedStyle(temp).color;
-    document.body.removeChild(temp);
-    const match = computed.match(/\d+/g);
-    return match ? match.slice(0, 3).map(Number) : [255, 255, 255];
+  const rgbString = `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
+  const hslString = `${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%`;
+
+  const [formatInputs, setFormatInputs] = useState(() => ({
+    hex,
+    rgb: rgbString,
+    hsl: hslString
+  }));
+  const [editingFormat, setEditingFormat] = useState(null);
+
+  useEffect(() => {
+    setFormatInputs(prev => {
+      const next = { ...prev };
+      let changed = false;
+
+      if (editingFormat !== 'hex' && next.hex !== hex) {
+        next.hex = hex;
+        changed = true;
+      }
+      if (editingFormat !== 'rgb' && next.rgb !== rgbString) {
+        next.rgb = rgbString;
+        changed = true;
+      }
+      if (editingFormat !== 'hsl' && next.hsl !== hslString) {
+        next.hsl = hslString;
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [hex, rgbString, hslString, editingFormat]);
+
+  const getDisplayValue = (format) => {
+    switch (format) {
+      case 'hex':
+        return hex;
+      case 'rgb':
+        return rgbString;
+      case 'hsl':
+        return hslString;
+      default:
+        return '';
+    }
   };
 
-  const bgRgb = parseBgColor(bgColor);
-  const contrastRatio = getContrastRatio(rgb, bgRgb);
+  const resetFormatInput = (format) => {
+    const displayValue = getDisplayValue(format);
+    setFormatInputs(prev => (prev[format] === displayValue ? prev : { ...prev, [format]: displayValue }));
+  };
 
-  const handleColorInput = (format, value) => {
-    try {
-      if (format === 'hex') {
-        const hexMatch = value.match(/^#?([0-9A-Fa-f]{6})$/);
-        if (hexMatch) {
-          const r = parseInt(hexMatch[1].substr(0, 2), 16);
-          const g = parseInt(hexMatch[1].substr(2, 2), 16);
-          const b = parseInt(hexMatch[1].substr(4, 2), 16);
-          
-          // Convert RGB back to HSL
-          const rNorm = r / 255;
-          const gNorm = g / 255;
-          const bNorm = b / 255;
-          const max = Math.max(rNorm, gNorm, bNorm);
-          const min = Math.min(rNorm, gNorm, bNorm);
-          let h, s, l = (max + min) / 2;
+  const setColorFromRgb = (r, g, b, nextAlpha = null) => {
+    const { h, s, v } = rgbToHsv(r, g, b);
+    setHue(h);
+    setSaturation(s);
+    setValue(v);
 
-          if (max === min) {
-            h = s = 0;
-          } else {
-            const d = max - min;
-            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-            switch (max) {
-              case rNorm: h = ((gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0)) / 6; break;
-              case gNorm: h = ((bNorm - rNorm) / d + 2) / 6; break;
-              case bNorm: h = ((rNorm - gNorm) / d + 4) / 6; break;
+    if (typeof nextAlpha === 'number' && !Number.isNaN(nextAlpha)) {
+      setAlpha(clamp(Math.round(nextAlpha), 0, 100));
+    }
+  };
+
+  const parseBgColor = (color) => {
+    if (!color) {
+      return [255, 255, 255];
+    }
+
+    const value = color.trim();
+
+    const hexMatch = value.match(/^#?([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+    if (hexMatch) {
+      let hexValue = hexMatch[1];
+      if (hexValue.length === 3 || hexValue.length === 4) {
+        hexValue = hexValue.split('').map(char => char + char).join('');
+      }
+      const r = parseInt(hexValue.slice(0, 2), 16);
+      const g = parseInt(hexValue.slice(2, 4), 16);
+      const b = parseInt(hexValue.slice(4, 6), 16);
+      return [r, g, b];
+    }
+
+    const rgbFunctionMatch = value.match(/^rgba?\((.+)\)$/i);
+    if (rgbFunctionMatch) {
+      const parts = rgbFunctionMatch[1].split(/[, ]+/).filter(Boolean);
+      if (parts.length >= 3) {
+        const channels = parts.slice(0, 3).map(part => {
+          if (part.endsWith('%')) {
+            const percentage = parseFloat(part);
+            if (Number.isNaN(percentage)) {
+              return Number.NaN;
             }
+            return clamp(Math.round((percentage / 100) * 255), 0, 255);
           }
-          
-          setHue(Math.round(h * 360));
-          setSaturation(Math.round(s * 100));
-          setLightness(Math.round(l * 100));
-        }
-      } else if (format === 'rgb') {
-        const rgbMatch = value.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-        if (rgbMatch) {
-          const [, r, g, b] = rgbMatch.map(Number);
-          if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
-            const rNorm = r / 255, gNorm = g / 255, bNorm = b / 255;
-            const max = Math.max(rNorm, gNorm, bNorm);
-            const min = Math.min(rNorm, gNorm, bNorm);
-            let h, s, l = (max + min) / 2;
-
-            if (max === min) {
-              h = s = 0;
-            } else {
-              const d = max - min;
-              s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-              switch (max) {
-                case rNorm: h = ((gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0)) / 6; break;
-                case gNorm: h = ((bNorm - rNorm) / d + 2) / 6; break;
-                case bNorm: h = ((rNorm - gNorm) / d + 4) / 6; break;
-              }
-            }
-            
-            setHue(Math.round(h * 360));
-            setSaturation(Math.round(s * 100));
-            setLightness(Math.round(l * 100));
+          const numeric = parseFloat(part);
+          if (Number.isNaN(numeric)) {
+            return Number.NaN;
           }
-        }
-      } else if (format === 'hsl') {
-        const hslMatch = value.match(/(\d+)\s*,\s*(\d+)%?\s*,\s*(\d+)%?/);
-        if (hslMatch) {
-          const [, h, s, l] = hslMatch.map(Number);
-          if (h >= 0 && h <= 360 && s >= 0 && s <= 100 && l >= 0 && l <= 100) {
-            setHue(h);
-            setSaturation(s);
-            setLightness(l);
-          }
+          return clamp(Math.round(numeric), 0, 255);
+        });
+        if (channels.every(Number.isFinite)) {
+          return channels;
         }
       }
-    } catch (e) {
-      console.error('Invalid color input');
     }
+
+    const bareRgbMatch = value.match(/^(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})$/);
+    if (bareRgbMatch) {
+      const channels = bareRgbMatch.slice(1, 4).map(num => {
+        const parsed = parseInt(num, 10);
+        if (Number.isNaN(parsed)) {
+          return Number.NaN;
+        }
+        return clamp(parsed, 0, 255);
+      });
+      if (channels.every(Number.isFinite)) {
+        return channels;
+      }
+    }
+
+    const hslMatch = value.match(/^hsla?\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%(?:\s*,\s*(\d*\.?\d+|\d+%))?\s*\)$/i);
+    if (hslMatch) {
+      const [, hValue, sValue, lValue] = hslMatch;
+      const h = ((parseFloat(hValue) % 360) + 360) % 360;
+      const s = clamp(parseFloat(sValue), 0, 100);
+      const l = clamp(parseFloat(lValue), 0, 100);
+      if ([h, s, l].every(Number.isFinite)) {
+        return hslToRgb(h, s, l);
+      }
+    }
+
+    return [255, 255, 255];
+  };
+
+  const bgRgb = useMemo(() => parseBgColor(bgColor), [bgColor]);
+  const contrastRatio = getContrastRatio(rgb, bgRgb);
+
+  const commitColorInput = (format, rawValue) => {
+    const value = rawValue.trim();
+
+    if (!value) {
+      resetFormatInput(format);
+      return;
+    }
+
+    try {
+      if (format === 'hex') {
+        let hexValue = value.startsWith('#') ? value.slice(1) : value;
+        if (![3, 4, 6, 8].includes(hexValue.length) || !/^[0-9a-fA-F]+$/.test(hexValue)) {
+          throw new Error('Invalid hex value');
+        }
+        if (hexValue.length === 3 || hexValue.length === 4) {
+          hexValue = hexValue.split('').map(char => char + char).join('');
+        }
+
+        const r = parseInt(hexValue.slice(0, 2), 16);
+        const g = parseInt(hexValue.slice(2, 4), 16);
+        const b = parseInt(hexValue.slice(4, 6), 16);
+        let nextAlpha = null;
+
+        if (hexValue.length === 8) {
+          const alphaByte = parseInt(hexValue.slice(6, 8), 16);
+          nextAlpha = (alphaByte / 255) * 100;
+        }
+
+        setColorFromRgb(r, g, b, nextAlpha);
+        return;
+      }
+
+      if (format === 'rgb') {
+        const numericParts = value.match(/-?\d+(\.\d+)?/g);
+        if (!numericParts || numericParts.length < 3) {
+          throw new Error('Invalid RGB value');
+        }
+
+        const r = clamp(Math.round(parseFloat(numericParts[0])), 0, 255);
+        const g = clamp(Math.round(parseFloat(numericParts[1])), 0, 255);
+        const b = clamp(Math.round(parseFloat(numericParts[2])), 0, 255);
+
+        let nextAlpha = null;
+        if (numericParts[3] !== undefined) {
+          const alphaRaw = parseFloat(numericParts[3]);
+          if (!Number.isNaN(alphaRaw)) {
+            nextAlpha = alphaRaw <= 1 ? alphaRaw * 100 : clamp(alphaRaw, 0, 100);
+          }
+        }
+
+        setColorFromRgb(r, g, b, nextAlpha);
+        return;
+      }
+
+      if (format === 'hsl') {
+        const numericParts = value.match(/-?\d+(\.\d+)?/g);
+        if (!numericParts || numericParts.length < 3) {
+          throw new Error('Invalid HSL value');
+        }
+
+        const h = ((parseFloat(numericParts[0]) % 360) + 360) % 360;
+        const s = clamp(parseFloat(numericParts[1]), 0, 100);
+        const l = clamp(parseFloat(numericParts[2]), 0, 100);
+
+        if ([h, s, l].some(Number.isNaN)) {
+          throw new Error('Invalid HSL numbers');
+        }
+
+        const [r, g, b] = hslToRgb(h, s, l);
+        setColorFromRgb(r, g, b);
+
+        if (numericParts[3] !== undefined) {
+          const alphaRaw = parseFloat(numericParts[3]);
+          if (!Number.isNaN(alphaRaw)) {
+            const alphaPercent = alphaRaw <= 1 ? alphaRaw * 100 : clamp(alphaRaw, 0, 100);
+            setAlpha(Math.round(alphaPercent));
+          }
+        }
+
+        return;
+      }
+    } catch (error) {
+      // fall through to reset
+    }
+
+    resetFormatInput(format);
   };
 
   const copyToClipboard = (text, format) => {
@@ -224,53 +476,53 @@ const ColorPicker = () => {
 
   const colorFormats = [
     { 
-      name: 'Hex', 
+      name: 'Hex',
+      key: 'hex',
       value: hex,
-      displayValue: hex,
       copyValue: hex,
       editable: true
     },
     { 
-      name: 'RGB', 
-      value: `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`,
-      displayValue: `${rgb[0]}, ${rgb[1]}, ${rgb[2]}`,
+      name: 'RGB',
+      key: 'rgb',
+      value: rgbString,
       copyValue: alpha < 100 ? `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(alpha/100).toFixed(2)})` : `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
       editable: true
     },
     { 
-      name: 'HSL', 
-      value: `${hue}, ${saturation}%, ${lightness}%`,
-      displayValue: `${hue}, ${saturation}%, ${lightness}%`,
-      copyValue: alpha < 100 ? `hsla(${hue}, ${saturation}%, ${lightness}%, ${(alpha/100).toFixed(2)})` : `hsl(${hue}, ${saturation}%, ${lightness}%)`,
+      name: 'HSL',
+      key: 'hsl',
+      value: hslString,
+      copyValue: alpha < 100 ? `hsla(${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%, ${(alpha/100).toFixed(2)})` : `hsl(${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%)`,
       editable: true
     },
     { 
-      name: 'Display P3', 
+      name: 'Display P3',
+      key: 'displayP3',
       value: `${(rgb[0]/255).toFixed(3)}, ${(rgb[1]/255).toFixed(3)}, ${(rgb[2]/255).toFixed(3)}`,
-      displayValue: `${(rgb[0]/255).toFixed(3)}, ${(rgb[1]/255).toFixed(3)}, ${(rgb[2]/255).toFixed(3)}`,
       copyValue: alpha < 100 ? `color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)} / ${(alpha/100).toFixed(2)})` : `color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)})`,
-      editable: true
+      editable: false
     },
     { 
-      name: 'LAB', 
+      name: 'LAB',
+      key: 'lab',
       value: `${lab.l.toFixed(2)}, ${lab.a.toFixed(2)}, ${lab.b.toFixed(2)}`,
-      displayValue: `${lab.l.toFixed(2)}, ${lab.a.toFixed(2)}, ${lab.b.toFixed(2)}`,
       copyValue: alpha < 100 ? `lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)} / ${(alpha/100).toFixed(2)})` : `lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)})`,
-      editable: true
+      editable: false
     },
     { 
-      name: 'LCH', 
+      name: 'LCH',
+      key: 'lch',
       value: `${lch.l.toFixed(2)}, ${lch.c.toFixed(2)}, ${lch.h.toFixed(2)}`,
-      displayValue: `${lch.l.toFixed(2)}, ${lch.c.toFixed(2)}, ${lch.h.toFixed(2)}`,
       copyValue: alpha < 100 ? `lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)} / ${(alpha/100).toFixed(2)})` : `lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)})`,
-      editable: true
+      editable: false
     },
     { 
-      name: 'OKLCH', 
+      name: 'OKLCH',
+      key: 'oklch',
       value: `${oklch.l.toFixed(3)}, ${oklch.c.toFixed(3)}, ${oklch.h.toFixed(2)}`,
-      displayValue: `${oklch.l.toFixed(3)}, ${oklch.c.toFixed(3)}, ${oklch.h.toFixed(2)}`,
       copyValue: alpha < 100 ? `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)} / ${(alpha/100).toFixed(2)})` : `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)})`,
-      editable: true
+      editable: false
     }
   ];
 
@@ -297,12 +549,12 @@ const ColorPicker = () => {
           const x = e.clientX - rect.left;
           const y = e.clientY - rect.top;
           
-          // Allow full range for color values but constrain mouse position for indicator visibility
+          // Calculate precise color values (0-100%)
           const sat = Math.max(0, Math.min(100, (x / rect.width) * 100));
-          const light = Math.max(0, Math.min(100, 100 - (y / rect.height) * 100));
+          const val = Math.max(0, Math.min(100, 100 - (y / rect.height) * 100));
           
-          setSaturation(Math.round(sat));
-          setLightness(Math.round(light));
+          setSaturation(sat);
+          setValue(val);
         }
       }
     };
@@ -358,21 +610,21 @@ const ColorPicker = () => {
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     
-                    // Allow full range for color values (0-100%)
+                    // Calculate precise color values (0-100%)
                     const sat = Math.max(0, Math.min(100, (x / rect.width) * 100));
-                    const light = Math.max(0, Math.min(100, 100 - (y / rect.height) * 100));
+                    const val = Math.max(0, Math.min(100, 100 - (y / rect.height) * 100));
                     
-                    setSaturation(Math.round(sat));
-                    setLightness(Math.round(light));
+                    setSaturation(sat);
+                    setValue(val);
                   }}
                 >
                   {/* Current color indicator */}
                   <div
                     className="absolute w-4 h-4 rounded-full border-2 border-white pointer-events-none"
                     style={{
-                      // Allow indicator to extend to edges for accurate edge color selection
-                      left: `${saturation}%`,
-                      top: `${100 - lightness}%`,
+                      // Ensure indicator position exactly matches the calculated saturation and value
+                      left: `${Math.max(0, Math.min(100, saturation))}%`,
+                      top: `${Math.max(0, Math.min(100, 100 - value))}%`,
                       transform: 'translate(-50%, -50%)',
                       boxShadow: '0 0 0 1px rgba(0,0,0,0.3), 0 0 2px rgba(0,0,0,0.5)'
                     }}
@@ -427,7 +679,7 @@ const ColorPicker = () => {
                 </div>
                 
                 <div className="text-center mt-3 text-xs text-gray-500">
-                  H: {hue}° S: {saturation}% L: {lightness}%
+                  H: {hslHue.toFixed(1)}° S: {hslSaturation.toFixed(1)}% L: {hslLightness.toFixed(1)}% · V: {value.toFixed(1)}%
                 </div>
               </div>
               
@@ -502,7 +754,7 @@ const ColorPicker = () => {
             <div className="space-y-3">
               {colorFormats.map((format) => (
                 <div 
-                  key={format.name} 
+                  key={format.key} 
                   className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
                   onClick={(e) => {
                     // Only copy if clicking on the container, not on input or button
@@ -516,15 +768,39 @@ const ColorPicker = () => {
                     {format.editable ? (
                       <input
                         type="text"
-                        value={format.displayValue}
-                        onChange={(e) => handleColorInput(format.name.toLowerCase(), e.target.value)}
+                        value={editingFormat === format.key ? formatInputs[format.key] : format.value}
+                        onChange={(e) => {
+                          const nextValue = e.target.value;
+                          setFormatInputs(prev => ({ ...prev, [format.key]: nextValue }));
+                        }}
+                        onFocus={() => {
+                          setEditingFormat(format.key);
+                          setFormatInputs(prev => ({
+                            ...prev,
+                            [format.key]: prev[format.key] ?? format.value
+                          }));
+                        }}
+                        onBlur={() => {
+                          commitColorInput(format.key, formatInputs[format.key] ?? '');
+                          setEditingFormat(current => (current === format.key ? null : current));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            commitColorInput(format.key, formatInputs[format.key] ?? '');
+                            e.currentTarget.blur();
+                          }
+                          if (e.key === 'Escape') {
+                            resetFormatInput(format.key);
+                            e.currentTarget.blur();
+                          }
+                        }}
                         onClick={(e) => e.stopPropagation()}
                         className="text-sm font-mono text-gray-900 bg-transparent border-0 outline-none focus:bg-white px-2 py-1 rounded transition-all"
                         style={{ width: '220px' }}
-                        placeholder={format.displayValue}
+                        placeholder={format.value}
                       />
                     ) : (
-                      <div className="text-sm font-mono text-gray-900 inline-block px-2 py-1" style={{ width: '220px' }}>{format.displayValue}</div>
+                      <div className="text-sm font-mono text-gray-900 inline-block px-2 py-1" style={{ width: '220px' }}>{format.value}</div>
                     )}
                   </div>
                   <button
@@ -609,7 +885,7 @@ const ColorPicker = () => {
         </div>
         
         {/* Color Palettes */}
-        <ColorPalettes hue={hue} saturation={saturation} lightness={lightness} baseColor={hex} />
+        <ColorPalettes hue={hslHue} saturation={hslSaturation} lightness={hslLightness} baseColor={hex} />
       </div>
     </div>
   );
@@ -693,15 +969,34 @@ const ColorPalettes = ({ hue, saturation, lightness, baseColor }) => {
   };
 
   const hslToRgb = (h, s, l) => {
-    s /= 100;
-    l /= 100;
-    const k = n => (n + h / 30) % 12;
-    const a = s * Math.min(l, 1 - l);
-    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    const hNorm = h / 360;
+    const sNorm = s / 100;
+    const lNorm = l / 100;
+    
+    const c = (1 - Math.abs(2 * lNorm - 1)) * sNorm;
+    const x = c * (1 - Math.abs((hNorm * 6) % 2 - 1));
+    const m = lNorm - c / 2;
+    
+    let r, g, b;
+    
+    if (hNorm >= 0 && hNorm < 1/6) {
+      r = c; g = x; b = 0;
+    } else if (hNorm >= 1/6 && hNorm < 2/6) {
+      r = x; g = c; b = 0;
+    } else if (hNorm >= 2/6 && hNorm < 3/6) {
+      r = 0; g = c; b = x;
+    } else if (hNorm >= 3/6 && hNorm < 4/6) {
+      r = 0; g = x; b = c;
+    } else if (hNorm >= 4/6 && hNorm < 5/6) {
+      r = x; g = 0; b = c;
+    } else {
+      r = c; g = 0; b = x;
+    }
+    
     return [
-      Math.round(255 * f(0)),
-      Math.round(255 * f(8)),
-      Math.round(255 * f(4))
+      Math.round(255 * (r + m)),
+      Math.round(255 * (g + m)),
+      Math.round(255 * (b + m))
     ];
   };
 
