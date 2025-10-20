@@ -1,30 +1,26 @@
-# Color Explorer - Professional Color Picker
+# Color picker
 
-A modern, professional color picker with support for multiple color spaces including Display P3, OKLCH, LAB, LCH, HSL, RGB, and Hex. Features include a contrast checker with WCAG compliance ratings.
+### Color selection
+- **Interactive rectangle color picker**
+- **Hue slider**
+- **Alpha/opacity control**
+- **Real-time preview**
+  
+### Color spaces
+- **Hex** 
+- **RGB/RGBA** 
+- **HSL/HSLA** 
+- **Display P3** 
+- **LAB** 
+- **LCH** 
+- **OKLCH**
+  
+### Features
+- **Editable color values**
+- **Copy to clipboard**
+- **Contrast checker**
+- **Live preview**
 
-## Features
-
-### 🎨 Color Selection
-- **Interactive Rectangle Color Picker**: Select saturation and lightness visually
-- **Hue Slider**: Full 360° hue spectrum
-- **Alpha/Opacity Control**: Vertical slider with visual preview
-- **Real-time Preview**: See your color with transparency effects
-
-### 📊 Color Spaces Supported
-- **Hex** - Standard hexadecimal format (#RRGGBB)
-- **RGB/RGBA** - Red, Green, Blue with optional alpha
-- **HSL/HSLA** - Hue, Saturation, Lightness with optional alpha
-- **Display P3** - Wide color gamut for modern displays
-- **LAB** - Perceptually uniform color space
-- **LCH** - Cylindrical form of LAB (Lightness, Chroma, Hue)
-- **OKLCH** - Modern perceptual color space
-
-### ✨ Additional Features
-- **Editable Color Values**: Edit Hex, RGB, and HSL values directly
-- **Copy to Clipboard**: One-click copy for all color formats
-- **Contrast Checker**: WCAG compliance testing against background colors
-- **Live Preview**: See how text looks with your selected colors
-- **Responsive Design**: Works on desktop and mobile devices
 
 ## Installation
 
