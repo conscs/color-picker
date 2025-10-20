@@ -1,25 +1,25 @@
 # Color picker
 
 ### Color selection
-**Interactive rectangle color picker**
-**Hue slider**
-**Alpha/opacity control**
-**Real-time preview**
-
+- **Interactive rectangle color picker**
+- **Hue slider**
+- **Alpha/opacity control**
+- **Real-time preview**
+  
 ### Color spaces
-**Hex** 
-**RGB/RGBA** 
-**HSL/HSLA** 
-**Display P3** 
-**LAB** 
-**LCH** 
-**OKLCH**
-
+- **Hex** 
+- **RGB/RGBA** 
+- **HSL/HSLA** 
+- **Display P3** 
+- **LAB** 
+- **LCH** 
+- **OKLCH**
+  
 ### Features
-**Editable color values**
-**Copy to clipboard**
-**Contrast checker**
-**Live preview**
+- **Editable color values**
+- **Copy to clipboard**
+- **Contrast checker**
+- **Live preview**
 
 
 ## Installation
