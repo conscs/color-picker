@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useLayoutEffect, useRef, useCallback } from 'react';
 import { Copy, Check } from 'lucide-react';
+
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 const ColorPicker = () => {
   const [hue, setHue] = useState(180);
@@ -12,8 +14,233 @@ const ColorPicker = () => {
   const [isDraggingWheel, setIsDraggingWheel] = useState(false);
   const [isDraggingLightness, setIsDraggingLightness] = useState(false);
   const [isDraggingAlpha, setIsDraggingAlpha] = useState(false);
+  const alphaSliderRef = useRef(null);
+  const alphaHandleRef = useRef(null);
+  const [alphaSliderMetrics, setAlphaSliderMetrics] = useState({ track: 320, handle: 24 });
 
-  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+  const WHITE_RGB = [255, 255, 255];
+
+  const parseAlphaToken = (token) => {
+    if (!token) {
+      return null;
+    }
+    const trimmed = token.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.endsWith('%')) {
+      const numeric = parseFloat(trimmed.slice(0, -1));
+      if (Number.isNaN(numeric)) {
+        return null;
+      }
+      return clamp(numeric / 100, 0, 1);
+    }
+    const numeric = parseFloat(trimmed);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    if (numeric > 1) {
+      return clamp(numeric / 100, 0, 1);
+    }
+    return clamp(numeric, 0, 1);
+  };
+
+  const parseHueToken = (token) => {
+    if (!token) {
+      return null;
+    }
+    const trimmed = token.trim().toLowerCase();
+    if (!trimmed) {
+      return null;
+    }
+    let numeric = parseFloat(trimmed);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    if (trimmed.endsWith('rad')) {
+      numeric = numeric * (180 / Math.PI);
+    } else if (trimmed.endsWith('turn')) {
+      numeric = numeric * 360;
+    }
+    return ((numeric % 360) + 360) % 360;
+  };
+
+  const parsePercentageToken = (token) => {
+    if (!token) {
+      return null;
+    }
+    const trimmed = token.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const isPercent = trimmed.endsWith('%');
+    const numeric = parseFloat(isPercent ? trimmed.slice(0, -1) : trimmed);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    return clamp(isPercent ? numeric : numeric, 0, 100);
+  };
+
+  const parseRgbChannelToken = (token) => {
+    if (!token) {
+      return null;
+    }
+    const trimmed = token.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const isPercent = trimmed.endsWith('%');
+    const numeric = parseFloat(isPercent ? trimmed.slice(0, -1) : trimmed);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    const value = isPercent ? (numeric / 100) * 255 : numeric;
+    return clamp(Math.round(value), 0, 255);
+  };
+
+  const parseRgbInput = (input) => {
+    if (!input) {
+      return null;
+    }
+    let body = input.trim();
+    if (/^rgba?\(/i.test(body)) {
+      const match = body.match(/^rgba?\((.*)\)$/i);
+      if (!match) {
+        return null;
+      }
+      body = match[1];
+    }
+    const parts = body.split('/');
+    const channelsPart = parts[0];
+    const alphaPart = parts[1]?.trim();
+
+    const channelTokens = channelsPart
+      .split(/[, ]+/)
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    if (channelTokens.length < 3) {
+      return null;
+    }
+
+    const channels = channelTokens.slice(0, 3).map(parseRgbChannelToken);
+    if (channels.some(channel => channel === null)) {
+      return null;
+    }
+
+    let alphaProvided = false;
+    let alpha = 1;
+    const alphaToken = alphaPart ?? channelTokens[3];
+    if (alphaToken !== undefined) {
+      const parsedAlpha = parseAlphaToken(alphaToken);
+      if (parsedAlpha === null) {
+        return null;
+      }
+      alphaProvided = true;
+      alpha = parsedAlpha;
+    }
+
+    return {
+      rgb: channels,
+      alpha,
+      alphaProvided
+    };
+  };
+
+  const parseHslInput = (input) => {
+    if (!input) {
+      return null;
+    }
+    let body = input.trim();
+    if (/^hsla?\(/i.test(body)) {
+      const match = body.match(/^hsla?\((.*)\)$/i);
+      if (!match) {
+        return null;
+      }
+      body = match[1];
+    }
+    const parts = body.split('/');
+    const channelsPart = parts[0];
+    const alphaPart = parts[1]?.trim();
+
+    const channelTokens = channelsPart
+      .split(/[, ]+/)
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    if (channelTokens.length < 3) {
+      return null;
+    }
+
+    const hue = parseHueToken(channelTokens[0]);
+    const saturation = parsePercentageToken(channelTokens[1]);
+    const lightness = parsePercentageToken(channelTokens[2]);
+
+    if ([hue, saturation, lightness].some(value => value === null)) {
+      return null;
+    }
+
+    let alphaProvided = false;
+    let alpha = 1;
+    const alphaToken = alphaPart ?? channelTokens[3];
+    if (alphaToken !== undefined) {
+      const parsedAlpha = parseAlphaToken(alphaToken);
+      if (parsedAlpha === null) {
+        return null;
+      }
+      alphaProvided = true;
+      alpha = parsedAlpha;
+    }
+
+    return {
+      h: hue,
+      s: saturation,
+      l: lightness,
+      alpha,
+      alphaProvided
+    };
+  };
+
+  const compositeColor = (foreground, foregroundAlpha, background) => {
+    const alphaValue = clamp(foregroundAlpha, 0, 1);
+    return foreground.map((channel, index) => (
+      (alphaValue * channel) + ((1 - alphaValue) * background[index])
+    ));
+  };
+
+  useLayoutEffect(() => {
+    const updateMetrics = () => {
+      if (!alphaSliderRef.current || !alphaHandleRef.current) {
+        return;
+      }
+      const trackHeight = alphaSliderRef.current.getBoundingClientRect().height;
+      const handleHeight = alphaHandleRef.current.getBoundingClientRect().height;
+      if (trackHeight > 0 && handleHeight > 0) {
+        setAlphaSliderMetrics(prev => (
+          prev.track === trackHeight && prev.handle === handleHeight
+            ? prev
+            : { track: trackHeight, handle: handleHeight }
+        ));
+      }
+    };
+
+    updateMetrics();
+    window.addEventListener('resize', updateMetrics);
+    return () => window.removeEventListener('resize', updateMetrics);
+  }, []);
+
+  const updateAlphaFromClientY = useCallback((sliderElement, clientY) => {
+    if (!sliderElement) {
+      return;
+    }
+    const rect = sliderElement.getBoundingClientRect();
+    if (rect.height === 0) {
+      return;
+    }
+    const offset = clamp(clientY - rect.top, 0, rect.height);
+    const percent = ((rect.height - offset) / rect.height) * 100;
+    setAlpha(Math.round(clamp(percent, 0, 100)));
+  }, []);
 
   // Convert HSL to RGB
   const hslToRgb = (h, s, l) => {
@@ -293,9 +520,17 @@ const ColorPicker = () => {
     setFormatInputs(prev => (prev[format] === displayValue ? prev : { ...prev, [format]: displayValue }));
   };
 
-  const setColorFromRgb = (r, g, b, nextAlpha = null) => {
+  const setColorFromRgb = (r, g, b, nextAlpha = null, options = {}) => {
     const { h, s, v } = rgbToHsv(r, g, b);
-    setHue(h);
+    setHue(prevHue => {
+      if (s === 0) {
+        if (typeof options.fallbackHue === 'number') {
+          return options.fallbackHue;
+        }
+        return prevHue;
+      }
+      return h;
+    });
     setSaturation(s);
     setValue(v);
 
@@ -305,8 +540,9 @@ const ColorPicker = () => {
   };
 
   const parseBgColor = (color) => {
+    const defaultResult = { rgb: WHITE_RGB, alpha: 1 };
     if (!color) {
-      return [255, 255, 255];
+      return defaultResult;
     }
 
     const value = color.trim();
@@ -320,63 +556,59 @@ const ColorPicker = () => {
       const r = parseInt(hexValue.slice(0, 2), 16);
       const g = parseInt(hexValue.slice(2, 4), 16);
       const b = parseInt(hexValue.slice(4, 6), 16);
-      return [r, g, b];
-    }
-
-    const rgbFunctionMatch = value.match(/^rgba?\((.+)\)$/i);
-    if (rgbFunctionMatch) {
-      const parts = rgbFunctionMatch[1].split(/[, ]+/).filter(Boolean);
-      if (parts.length >= 3) {
-        const channels = parts.slice(0, 3).map(part => {
-          if (part.endsWith('%')) {
-            const percentage = parseFloat(part);
-            if (Number.isNaN(percentage)) {
-              return Number.NaN;
-            }
-            return clamp(Math.round((percentage / 100) * 255), 0, 255);
-          }
-          const numeric = parseFloat(part);
-          if (Number.isNaN(numeric)) {
-            return Number.NaN;
-          }
-          return clamp(Math.round(numeric), 0, 255);
-        });
-        if (channels.every(Number.isFinite)) {
-          return channels;
+      let alphaComponent = 1;
+      if (hexValue.length === 8) {
+        const alphaByte = parseInt(hexValue.slice(6, 8), 16);
+        if (!Number.isNaN(alphaByte)) {
+          alphaComponent = clamp(alphaByte / 255, 0, 1);
         }
       }
+      return { rgb: [r, g, b], alpha: alphaComponent };
     }
 
-    const bareRgbMatch = value.match(/^(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})$/);
-    if (bareRgbMatch) {
-      const channels = bareRgbMatch.slice(1, 4).map(num => {
-        const parsed = parseInt(num, 10);
-        if (Number.isNaN(parsed)) {
-          return Number.NaN;
-        }
-        return clamp(parsed, 0, 255);
-      });
-      if (channels.every(Number.isFinite)) {
-        return channels;
-      }
+    const rgbResult = parseRgbInput(value);
+    if (rgbResult) {
+      return { rgb: rgbResult.rgb, alpha: rgbResult.alpha };
     }
 
-    const hslMatch = value.match(/^hsla?\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%(?:\s*,\s*(\d*\.?\d+|\d+%))?\s*\)$/i);
-    if (hslMatch) {
-      const [, hValue, sValue, lValue] = hslMatch;
-      const h = ((parseFloat(hValue) % 360) + 360) % 360;
-      const s = clamp(parseFloat(sValue), 0, 100);
-      const l = clamp(parseFloat(lValue), 0, 100);
-      if ([h, s, l].every(Number.isFinite)) {
-        return hslToRgb(h, s, l);
-      }
+    const hslResult = parseHslInput(value);
+    if (hslResult) {
+      const colorRgb = hslToRgb(hslResult.h, hslResult.s, hslResult.l);
+      return { rgb: colorRgb, alpha: hslResult.alpha };
     }
 
-    return [255, 255, 255];
+    return defaultResult;
   };
 
-  const bgRgb = useMemo(() => parseBgColor(bgColor), [bgColor]);
-  const contrastRatio = getContrastRatio(rgb, bgRgb);
+  const parsedBackground = useMemo(() => {
+    const parsed = parseBgColor(bgColor);
+    const compositeRgb = parsed.alpha < 1
+      ? compositeColor(parsed.rgb, parsed.alpha, WHITE_RGB)
+      : parsed.rgb;
+    return {
+      ...parsed,
+      compositeRgb
+    };
+  }, [bgColor]);
+
+  const alphaValue = clamp(alpha, 0, 100);
+  const alphaHandlePosition = useMemo(() => {
+    const { track, handle } = alphaSliderMetrics;
+    if (!track || !handle) {
+      return Math.max(0, Math.min(100, 100 - alphaValue));
+    }
+    const handlePercent = (handle / track) * 100;
+    const halfHandlePercent = handlePercent / 2;
+    const travelPercent = Math.max(100 - handlePercent, 0);
+    const travelFactor = (100 - alphaValue) / 100;
+    return halfHandlePercent + (travelFactor * travelPercent);
+  }, [alphaSliderMetrics, alphaValue]);
+  const normalizedAlpha = alphaValue / 100;
+  const textCompositeRgb = useMemo(
+    () => compositeColor(rgb, normalizedAlpha, parsedBackground.compositeRgb),
+    [rgb, normalizedAlpha, parsedBackground]
+  );
+  const contrastRatio = getContrastRatio(textCompositeRgb, parsedBackground.compositeRgb);
 
   const commitColorInput = (format, rawValue) => {
     const value = rawValue.trim();
@@ -411,52 +643,27 @@ const ColorPicker = () => {
       }
 
       if (format === 'rgb') {
-        const numericParts = value.match(/-?\d+(\.\d+)?/g);
-        if (!numericParts || numericParts.length < 3) {
+        const parsed = parseRgbInput(value);
+        if (!parsed) {
           throw new Error('Invalid RGB value');
         }
 
-        const r = clamp(Math.round(parseFloat(numericParts[0])), 0, 255);
-        const g = clamp(Math.round(parseFloat(numericParts[1])), 0, 255);
-        const b = clamp(Math.round(parseFloat(numericParts[2])), 0, 255);
-
-        let nextAlpha = null;
-        if (numericParts[3] !== undefined) {
-          const alphaRaw = parseFloat(numericParts[3]);
-          if (!Number.isNaN(alphaRaw)) {
-            nextAlpha = alphaRaw <= 1 ? alphaRaw * 100 : clamp(alphaRaw, 0, 100);
-          }
-        }
+        const [r, g, b] = parsed.rgb;
+        const nextAlpha = parsed.alphaProvided ? parsed.alpha * 100 : null;
 
         setColorFromRgb(r, g, b, nextAlpha);
         return;
       }
 
       if (format === 'hsl') {
-        const numericParts = value.match(/-?\d+(\.\d+)?/g);
-        if (!numericParts || numericParts.length < 3) {
+        const parsed = parseHslInput(value);
+        if (!parsed) {
           throw new Error('Invalid HSL value');
         }
 
-        const h = ((parseFloat(numericParts[0]) % 360) + 360) % 360;
-        const s = clamp(parseFloat(numericParts[1]), 0, 100);
-        const l = clamp(parseFloat(numericParts[2]), 0, 100);
-
-        if ([h, s, l].some(Number.isNaN)) {
-          throw new Error('Invalid HSL numbers');
-        }
-
-        const [r, g, b] = hslToRgb(h, s, l);
-        setColorFromRgb(r, g, b);
-
-        if (numericParts[3] !== undefined) {
-          const alphaRaw = parseFloat(numericParts[3]);
-          if (!Number.isNaN(alphaRaw)) {
-            const alphaPercent = alphaRaw <= 1 ? alphaRaw * 100 : clamp(alphaRaw, 0, 100);
-            setAlpha(Math.round(alphaPercent));
-          }
-        }
-
+        const [r, g, b] = hslToRgb(parsed.h, parsed.s, parsed.l);
+        const nextAlpha = parsed.alphaProvided ? parsed.alpha * 100 : null;
+        setColorFromRgb(r, g, b, nextAlpha, { fallbackHue: parsed.h });
         return;
       }
     } catch (error) {
@@ -486,42 +693,42 @@ const ColorPicker = () => {
       name: 'RGB',
       key: 'rgb',
       value: rgbString,
-      copyValue: alpha < 100 ? `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(alpha/100).toFixed(2)})` : `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
+      copyValue: alphaValue < 100 ? `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(alphaValue/100).toFixed(2)})` : `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
       editable: true
     },
     { 
       name: 'HSL',
       key: 'hsl',
       value: hslString,
-      copyValue: alpha < 100 ? `hsla(${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%, ${(alpha/100).toFixed(2)})` : `hsl(${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%)`,
+      copyValue: alphaValue < 100 ? `hsla(${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%, ${(alphaValue/100).toFixed(2)})` : `hsl(${hslHue.toFixed(1)}, ${hslSaturation.toFixed(1)}%, ${hslLightness.toFixed(1)}%)`,
       editable: true
     },
     { 
       name: 'Display P3',
       key: 'displayP3',
       value: `${(rgb[0]/255).toFixed(3)}, ${(rgb[1]/255).toFixed(3)}, ${(rgb[2]/255).toFixed(3)}`,
-      copyValue: alpha < 100 ? `color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)} / ${(alpha/100).toFixed(2)})` : `color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)})`,
+      copyValue: alphaValue < 100 ? `color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)} / ${(alphaValue/100).toFixed(2)})` : `color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)})`,
       editable: false
     },
     { 
       name: 'LAB',
       key: 'lab',
       value: `${lab.l.toFixed(2)}, ${lab.a.toFixed(2)}, ${lab.b.toFixed(2)}`,
-      copyValue: alpha < 100 ? `lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)} / ${(alpha/100).toFixed(2)})` : `lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)})`,
+      copyValue: alphaValue < 100 ? `lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)} / ${(alphaValue/100).toFixed(2)})` : `lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)})`,
       editable: false
     },
     { 
       name: 'LCH',
       key: 'lch',
       value: `${lch.l.toFixed(2)}, ${lch.c.toFixed(2)}, ${lch.h.toFixed(2)}`,
-      copyValue: alpha < 100 ? `lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)} / ${(alpha/100).toFixed(2)})` : `lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)})`,
+      copyValue: alphaValue < 100 ? `lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)} / ${(alphaValue/100).toFixed(2)})` : `lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)})`,
       editable: false
     },
     { 
       name: 'OKLCH',
       key: 'oklch',
       value: `${oklch.l.toFixed(3)}, ${oklch.c.toFixed(3)}, ${oklch.h.toFixed(2)}`,
-      copyValue: alpha < 100 ? `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)} / ${(alpha/100).toFixed(2)})` : `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)})`,
+      copyValue: alphaValue < 100 ? `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)} / ${(alphaValue/100).toFixed(2)})` : `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)})`,
       editable: false
     }
   ];
@@ -556,6 +763,8 @@ const ColorPicker = () => {
           setSaturation(sat);
           setValue(val);
         }
+      } else if (isDraggingAlpha && alphaSliderRef.current) {
+        updateAlphaFromClientY(alphaSliderRef.current, e.clientY);
       }
     };
 
@@ -571,7 +780,7 @@ const ColorPicker = () => {
       }
     };
     
-    if (isDraggingWheel) {
+    if (isDraggingWheel || isDraggingAlpha) {
       window.addEventListener('mousemove', handleGlobalMouseMove);
     }
     window.addEventListener('mouseup', handleGlobalMouseUp);
@@ -582,7 +791,7 @@ const ColorPicker = () => {
       window.removeEventListener('mouseup', handleGlobalMouseUp);
       window.removeEventListener('selectstart', handleGlobalSelectStart);
     };
-  }, [isDraggingWheel, isDraggingLightness, isDraggingAlpha]);
+  }, [isDraggingWheel, isDraggingLightness, isDraggingAlpha, updateAlphaFromClientY]);
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -698,39 +907,29 @@ const ColorPicker = () => {
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setIsDraggingAlpha(true);
-                      const sliderRef = { current: e.currentTarget };
-                      const rect = sliderRef.current.getBoundingClientRect();
-                      const clientY = e.clientY;
-                      const y = clientY - rect.top;
-                      const percentage = Math.max(0, Math.min(100, (y / rect.height) * 100));
-                      setAlpha(Math.round(100 - percentage));
+                      updateAlphaFromClientY(e.currentTarget, e.clientY);
                     }}
                     onMouseMove={(e) => {
                       if (isDraggingAlpha) {
                         e.preventDefault();
-                        const sliderRef = { current: e.currentTarget };
-                        const rect = sliderRef.current.getBoundingClientRect();
-                        const clientY = e.clientY;
-                        const y = clientY - rect.top;
-                        const percentage = Math.max(0, Math.min(100, (y / rect.height) * 100));
-                        setAlpha(Math.round(100 - percentage));
+                        updateAlphaFromClientY(e.currentTarget, e.clientY);
                       }
                     }}
                     onMouseUp={() => setIsDraggingAlpha(false)}
-                    onMouseLeave={() => setIsDraggingAlpha(false)}
+                    ref={alphaSliderRef}
                   >
                     <div
-                      className="absolute left-1/2 transform -translate-x-1/2 w-6 h-6 rounded-full border-2 border-white shadow-lg pointer-events-none"
+                      ref={alphaHandleRef}
+                      className="absolute left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full border-2 border-white shadow-lg pointer-events-none"
                       style={{
-                        // Constrain visual position to keep circle within slider bounds (24px = ~3% of 320px height)
-                        top: `${Math.max(3, Math.min(97, 100 - alpha))}%`,
-                        backgroundColor: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha/100})`,
+                        top: `${alphaHandlePosition}%`,
+                        backgroundColor: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alphaValue/100})`,
                         boxShadow: '0 0 0 1px white, 0 0 0 2px rgba(0,0,0,0.3)'
                       }}
                     />
                   </div>
                   <div className="text-center mt-3 text-xs text-gray-500">
-                    {alpha}%
+                    {alphaValue}%
                   </div>
                 </div>
               </div>
@@ -741,7 +940,7 @@ const ColorPicker = () => {
               <div 
                 className="w-full h-24 rounded-lg border-2 border-gray-200"
                 style={{ 
-                  backgroundColor: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha/100})`,
+                  backgroundColor: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alphaValue/100})`,
                   backgroundImage: 'repeating-conic-gradient(#ddd 0% 25%, white 0% 50%) 50% / 20px 20px'
                 }}
               />
@@ -875,11 +1074,11 @@ const ColorPicker = () => {
               className="p-6 rounded-lg border-2 border-gray-200 relative"
               style={{ 
                 backgroundColor: bgColor,
-                backgroundImage: alpha < 100 ? 'repeating-conic-gradient(#ddd 0% 25%, white 0% 50%) 50% / 20px 20px' : 'none'
+                backgroundImage: (alphaValue < 100 || parsedBackground.alpha < 1) ? 'repeating-conic-gradient(#ddd 0% 25%, white 0% 50%) 50% / 20px 20px' : 'none'
               }}
             >
-              <p className="text-base mb-2" style={{ color: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha/100})` }}>Normal text (16px) — The quick brown fox jumps over the lazy dog</p>
-              <p className="text-lg font-semibold" style={{ color: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha/100})` }}>Large text (18px bold) — The quick brown fox jumps</p>
+              <p className="text-base mb-2" style={{ color: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alphaValue/100})` }}>Normal text (16px) — The quick brown fox jumps over the lazy dog</p>
+              <p className="text-lg font-semibold" style={{ color: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alphaValue/100})` }}>Large text (18px bold) — The quick brown fox jumps</p>
             </div>
           </div>
         </div>
@@ -1078,7 +1277,7 @@ const ColorPalettes = ({ hue, saturation, lightness, baseColor }) => {
         title="Tailwind scale" 
         showLabels={false}
         showLabelsOnHover={true}
-        enableHoverScale={false}
+        enableHoverScale={true}
       />
       
       {/* Tints */}
