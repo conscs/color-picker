@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useLayoutEffect, useRef, useCallback } from 'react';
-import { Copy, Check, Sun, Moon, Palette, ArrowLeftRight, LayoutGrid, Wand2, FileCode } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useLayoutEffect, useRef } from 'react';
+import { Slider as SliderPrimitive } from 'radix-ui';
+import { Copy, Check, Sun, Moon, Palette, LayoutGrid, Wand2, FileCode, Pipette } from 'lucide-react';
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
@@ -61,28 +62,48 @@ const GradientsSection = ({ baseColor }) => {
   const [colorSpace, setColorSpace] = useState('oklch');
   const [angle, setAngle] = useState(90);
   const [copied, setCopied] = useState(false);
+  const [draggingStopId, setDraggingStopId] = useState(null);
+  const [selectedStopId, setSelectedStopId] = useState(1);
+  const gradientBarRef = useRef(null);
 
   useEffect(() => {
     setStops(prev => prev.map((s, i) => i === 0 ? { ...s, color: baseColor } : s));
   }, [baseColor]);
 
-  const stopsCss = stops.map(s => `${s.color} ${s.position}%`).join(', ');
+  useEffect(() => {
+    if (!draggingStopId) return;
+    const onMove = (e) => {
+      if (!gradientBarRef.current) return;
+      const rect = gradientBarRef.current.getBoundingClientRect();
+      const pos = Math.round(clamp(((e.clientX - rect.left) / rect.width) * 100, 0, 100));
+      setStops(prev => prev.map(s => s.id === draggingStopId ? { ...s, position: pos } : s));
+    };
+    const onUp = () => setDraggingStopId(null);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, [draggingStopId]);
+
+  const stopsCss = [...stops].sort((a, b) => a.position - b.position).map(s => `${s.color} ${s.position}%`).join(', ');
   const interpolation = colorSpace === 'srgb' ? '' : ` in ${colorSpace}`;
   const gradientCss = `linear-gradient(${angle}deg${interpolation}, ${stopsCss})`;
 
   const addStop = () => {
     const newId = Date.now();
-    const midPos = stops.length >= 2 ? Math.round((stops[0].position + stops[stops.length - 1].position) / 2) : 50;
-    setStops(prev => [...prev, { id: newId, color: '#888888', position: midPos }].sort((a, b) => a.position - b.position));
+    const sorted = [...stops].sort((a, b) => a.position - b.position);
+    const midPos = sorted.length >= 2 ? Math.round((sorted[0].position + sorted[sorted.length - 1].position) / 2) : 50;
+    setStops(prev => [...prev, { id: newId, color: '#888888', position: midPos }]);
+    setSelectedStopId(newId);
   };
 
   const removeStop = (id) => {
     if (stops.length <= 2) return;
     setStops(prev => prev.filter(s => s.id !== id));
+    setSelectedStopId(stops.find(s => s.id !== id)?.id ?? null);
   };
 
   const updateStop = (id, field, value) => {
-    setStops(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s).sort((a, b) => a.position - b.position));
+    setStops(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
 
   const copyGradient = () => {
@@ -104,12 +125,31 @@ const GradientsSection = ({ baseColor }) => {
           {/* Color space */}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Color space</label>
-            <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
+            <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit mb-3">
               {spaces.map(s => (
                 <button key={s} onClick={() => setColorSpace(s)}
                   className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${colorSpace === s ? 'bg-white dark:bg-gray-700 text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
                   {s.toUpperCase()}
                 </button>
+              ))}
+            </div>
+
+            <div className="relative" style={{ paddingBottom: '18px' }}>
+              <div ref={gradientBarRef} className="h-12 rounded-lg select-none" style={{ background: gradientCss }} />
+              {stops.map((stop) => (
+                <div
+                  key={stop.id}
+                  onMouseDown={(e) => { e.preventDefault(); setDraggingStopId(stop.id); setSelectedStopId(stop.id); }}
+                  className={`absolute w-5 h-5 rounded-full border-[2.5px] cursor-grab active:cursor-grabbing transition-shadow ${selectedStopId === stop.id ? 'border-foreground ring-2 ring-ring' : 'border-white'}`}
+                  style={{
+                    left: `${stop.position}%`,
+                    bottom: 0,
+                    transform: 'translateX(-50%)',
+                    backgroundColor: stop.color,
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+                    zIndex: selectedStopId === stop.id ? 10 : 1,
+                  }}
+                />
               ))}
             </div>
           </div>
@@ -125,52 +165,40 @@ const GradientsSection = ({ baseColor }) => {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Color stops</label>
-              <button onClick={addStop}
-                className="text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors">
-                + Add stop
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => { setStops([{ id: 1, color: baseColor, position: 0 }, { id: 2, color: '#ffffff', position: 100 }]); setSelectedStopId(1); }}
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors">
+                  Clear all
+                </button>
+                <button onClick={addStop}
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 hover:bg-muted transition-colors">
+                  + Add stop
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
-              {stops.map((stop, idx) => (
-                <div key={stop.id} className="flex items-center gap-3">
+              {[...stops].sort((a, b) => a.position - b.position).map((stop) => (
+                <div key={stop.id}
+                  onClick={() => setSelectedStopId(stop.id)}
+                  className={`flex items-center gap-3 rounded-lg px-2 py-1 cursor-pointer transition-colors ${selectedStopId === stop.id ? 'bg-muted' : 'hover:bg-muted/50'}`}>
                   <input type="color" value={stop.color} onChange={e => updateStop(stop.id, 'color', e.target.value)}
-                    className="w-9 h-9 rounded-lg cursor-pointer border border-border" />
+                    onClick={e => e.stopPropagation()}
+                    className="w-9 h-9 rounded-lg cursor-pointer border border-border shrink-0" />
                   <input type="text" value={stop.color} onChange={e => updateStop(stop.id, 'color', e.target.value)}
+                    onClick={e => e.stopPropagation()}
                     className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-lg bg-transparent text-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
                   <input type="number" min="0" max="100" value={stop.position} onChange={e => updateStop(stop.id, 'position', Number(e.target.value))}
+                    onClick={e => e.stopPropagation()}
                     className="w-16 px-2 py-1.5 text-sm border border-border rounded-lg bg-transparent text-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
                   <span className="text-sm text-muted-foreground">%</span>
                   {stops.length > 2 && (
-                    <button onClick={() => removeStop(stop.id)}
-                      className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
+                    <button onClick={e => { e.stopPropagation(); removeStop(stop.id); }}
+                      className="text-muted-foreground hover:text-foreground text-lg leading-none ml-auto">×</button>
                   )}
                 </div>
               ))}
             </div>
           </div>
-        </div>
-
-        {/* Preview */}
-        <div className="bg-card rounded-xl border border-border p-5">
-          <label className="block text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wide">Preview</label>
-          <div className="h-20 rounded-lg" style={{ background: gradientCss }} />
-
-          {/* Also show comparison */}
-          <div className="mt-4 space-y-2">
-            {['srgb', 'oklab', 'oklch'].map(space => {
-              const interp = space === 'srgb' ? '' : ` in ${space}`;
-              const css = `linear-gradient(${angle}deg${interp}, ${stopsCss})`;
-              return (
-                <div key={space} className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-muted-foreground w-12 shrink-0">{space.toUpperCase()}</span>
-                  <div className="flex-1 h-8 rounded" style={{ background: css }} />
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Requires Chrome 111+, Firefox 113+, Safari 16.2+ for OKLAB/OKLCH interpolation.
-          </p>
         </div>
 
         {/* CSS output */}
@@ -443,13 +471,12 @@ const ColorPicker = () => {
   const [alpha, setAlpha] = useState(100);
   const [copiedFormat, setCopiedFormat] = useState(null);
   const [animateFormat, setAnimateFormat] = useState(null);
-  const [bgColor, setBgColor] = useState('#FFFFFF');
+  const [bgColor, setBgColor] = useState('#ffffff');
+  const [textColor, setTextColor] = useState('#000000');
+  const textColorInputRef = useRef(null);
+  const bgColorInputRef = useRef(null);
   const [isDraggingWheel, setIsDraggingWheel] = useState(false);
   const [isDraggingLightness, setIsDraggingLightness] = useState(false);
-  const [isDraggingAlpha, setIsDraggingAlpha] = useState(false);
-  const alphaSliderRef = useRef(null);
-  const alphaHandleRef = useRef(null);
-  const [alphaSliderMetrics, setAlphaSliderMetrics] = useState({ track: 320, handle: 24 });
   const [theme, setTheme] = useState(() => {
     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.classList.toggle('dark', dark);
@@ -550,25 +577,6 @@ const ColorPicker = () => {
     return fg.map((c, i) => a*c + (1-a)*bg[i]);
   };
 
-  useLayoutEffect(() => {
-    const update = () => {
-      if (!alphaSliderRef.current || !alphaHandleRef.current) return;
-      const th = alphaSliderRef.current.getBoundingClientRect().height;
-      const hh = alphaHandleRef.current.getBoundingClientRect().height;
-      if (th > 0 && hh > 0) setAlphaSliderMetrics(p => p.track===th && p.handle===hh ? p : { track:th, handle:hh });
-    };
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
-
-  const updateAlphaFromClientY = useCallback((el, clientY) => {
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (!rect.height) return;
-    const offset = clamp(clientY - rect.top, 0, rect.height);
-    setAlpha(Math.round(((rect.height - offset) / rect.height) * 100));
-  }, []);
 
   const hslToRgb = (h, s, l) => {
     const hN=h/360, sN=s/100, lN=l/100;
@@ -722,18 +730,17 @@ const ColorPicker = () => {
     return { ...p, compositeRgb: p.alpha<1 ? compositeColor(p.rgb,p.alpha,WHITE_RGB) : p.rgb };
   }, [bgColor]);
 
-  const alphaValue = clamp(alpha, 0, 100);
-  const alphaHandlePos = useMemo(() => {
-    const { track, handle } = alphaSliderMetrics;
-    if (!track||!handle) return 100-alphaValue;
-    const hp=(handle/track)*100, tp=Math.max(100-hp,0);
-    return hp/2 + ((100-alphaValue)/100)*tp;
-  }, [alphaSliderMetrics, alphaValue]);
+  const parsedText = useMemo(() => {
+    const p = parseBgColor(textColor);
+    return { ...p, compositeRgb: p.alpha<1 ? compositeColor(p.rgb,p.alpha,parsedBg.compositeRgb) : p.rgb };
+  }, [textColor, parsedBg]);
 
+  const alphaValue = clamp(alpha, 0, 100);
+  const alphaHex = alphaValue < 100 ? Math.round(alphaValue * 255 / 100).toString(16).padStart(2, '0') : '';
+  const alphaSuffix = alphaValue < 100 ? ` / ${(alphaValue / 100).toFixed(2)}` : '';
   const normalizedAlpha = alphaValue / 100;
-  const textCompositeRgb = useMemo(() => compositeColor(rgb, normalizedAlpha, parsedBg.compositeRgb), [rgb, normalizedAlpha, parsedBg]);
-  const contrastRatio = getContrastRatio(textCompositeRgb, parsedBg.compositeRgb);
-  const apcaValue = getApcaContrast(textCompositeRgb, parsedBg.compositeRgb);
+  const contrastRatio = getContrastRatio(parsedText.compositeRgb, parsedBg.compositeRgb);
+  const apcaValue = getApcaContrast(parsedText.compositeRgb, parsedBg.compositeRgb);
 
   const commitColorInput = (format, rawValue) => {
     const v = rawValue.trim();
@@ -765,13 +772,13 @@ const ColorPicker = () => {
   const gamutLabels = { srgb:'sRGB', p3:'P3', out:'Out of P3' };
 
   const colorFormats = [
-    { name:'Hex',        key:'hex',       value:hex,        copyValue:hex,        editable:true  },
-    { name:'RGB',        key:'rgb',       value:rgbString,  copyValue:alphaValue<100?`rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(alphaValue/100).toFixed(2)})`:`rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`, editable:true  },
-    { name:'HSL',        key:'hsl',       value:hslString,  copyValue:alphaValue<100?`hsla(${hslHue.toFixed(1)}, ${hslSat.toFixed(1)}%, ${hslL.toFixed(1)}%, ${(alphaValue/100).toFixed(2)})`:`hsl(${hslHue.toFixed(1)}, ${hslSat.toFixed(1)}%, ${hslL.toFixed(1)}%)`, editable:true  },
-    { name:'Display P3', key:'displayP3', value:`${(rgb[0]/255).toFixed(3)}, ${(rgb[1]/255).toFixed(3)}, ${(rgb[2]/255).toFixed(3)}`, copyValue:alphaValue<100?`color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)} / ${(alphaValue/100).toFixed(2)})`:`color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)})`, editable:false, showGamut:true },
-    { name:'LAB',        key:'lab',       value:`${lab.l.toFixed(2)}, ${lab.a.toFixed(2)}, ${lab.b.toFixed(2)}`, copyValue:alphaValue<100?`lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)} / ${(alphaValue/100).toFixed(2)})`:`lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)})`, editable:false },
-    { name:'LCH',        key:'lch',       value:`${lch.l.toFixed(2)}, ${lch.c.toFixed(2)}, ${lch.h.toFixed(2)}`, copyValue:alphaValue<100?`lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)} / ${(alphaValue/100).toFixed(2)})`:`lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)})`, editable:false },
-    { name:'OKLCH',      key:'oklch',     value:oklchString, copyValue:alphaValue<100?`oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)} / ${(alphaValue/100).toFixed(2)})`:`oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)})`, editable:true, showGamut:true },
+    { name:'Hex',        key:'hex',       value:alphaValue<100?hex+alphaHex:hex,  copyValue:alphaValue<100?hex+alphaHex:hex,  editable:true  },
+    { name:'RGB',        key:'rgb',       value:rgbString+alphaSuffix,            copyValue:alphaValue<100?`rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(alphaValue/100).toFixed(2)})`:`rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`, editable:true  },
+    { name:'HSL',        key:'hsl',       value:hslString+alphaSuffix,            copyValue:alphaValue<100?`hsla(${hslHue.toFixed(1)}, ${hslSat.toFixed(1)}%, ${hslL.toFixed(1)}%, ${(alphaValue/100).toFixed(2)})`:`hsl(${hslHue.toFixed(1)}, ${hslSat.toFixed(1)}%, ${hslL.toFixed(1)}%)`, editable:true  },
+    { name:'Display P3', key:'displayP3', value:`${(rgb[0]/255).toFixed(3)}, ${(rgb[1]/255).toFixed(3)}, ${(rgb[2]/255).toFixed(3)}${alphaSuffix}`, copyValue:alphaValue<100?`color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)} / ${(alphaValue/100).toFixed(2)})`:`color(display-p3 ${(rgb[0]/255).toFixed(3)} ${(rgb[1]/255).toFixed(3)} ${(rgb[2]/255).toFixed(3)})`, editable:false, showGamut:true },
+    { name:'LAB',        key:'lab',       value:`${lab.l.toFixed(2)}, ${lab.a.toFixed(2)}, ${lab.b.toFixed(2)}${alphaSuffix}`, copyValue:alphaValue<100?`lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)} / ${(alphaValue/100).toFixed(2)})`:`lab(${lab.l.toFixed(2)} ${lab.a.toFixed(2)} ${lab.b.toFixed(2)})`, editable:false },
+    { name:'LCH',        key:'lch',       value:`${lch.l.toFixed(2)}, ${lch.c.toFixed(2)}, ${lch.h.toFixed(2)}${alphaSuffix}`, copyValue:alphaValue<100?`lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)} / ${(alphaValue/100).toFixed(2)})`:`lch(${lch.l.toFixed(2)} ${lch.c.toFixed(2)} ${lch.h.toFixed(2)})`, editable:false },
+    { name:'OKLCH',      key:'oklch',     value:oklchString+alphaSuffix,          copyValue:alphaValue<100?`oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)} / ${(alphaValue/100).toFixed(2)})`:`oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(2)})`, editable:true, showGamut:true },
   ];
 
   const getWCAGLevel = (r) => {
@@ -786,13 +793,64 @@ const ColorPicker = () => {
     if (lc>=45) return { level:`Lc ${lc.toFixed(1)}`, text:'UI components', color:'text-yellow-600 dark:text-yellow-400' };
     return { level:`Lc ${lc.toFixed(1)}`, text:'Fails APCA', color:'text-red-500' };
   };
-  const wcagResult = getWCAGLevel(contrastRatio);
-  const apcaResult = getApcaRating(apcaValue);
-  const contrastResult = contrastAlgorithm === 'wcag2' ? wcagResult : apcaResult;
+
+  const fixContrast = () => {
+    const target = contrastAlgorithm === 'wcag2' ? 7 : 90;
+    const bgRgb = parsedBg.compositeRgb;
+    const checkFn = (r, g, b) => contrastAlgorithm === 'wcag2'
+      ? getContrastRatio([r,g,b], bgRgb)
+      : Math.abs(getApcaContrast([r,g,b], bgRgb));
+
+    const p = parseBgColor(textColor);
+    const { h, s } = rgbToHsl(...p.rgb);
+
+    const sampleRgb = (l) => {
+      const [r,g,b] = hslToRgb(h, s, l);
+      return [Math.round(r), Math.round(g), Math.round(b)];
+    };
+
+    const currentL = rgbToHsl(...p.rgb).l;
+    const [cr, cg, cb] = sampleRgb(currentL);
+    if (checkFn(cr, cg, cb) >= target) return;
+
+    // Binary search toward dark (L→0): find largest L that still passes
+    let darkL = null;
+    if (checkFn(...sampleRgb(0)) >= target) {
+      let lo = 0, hi = currentL;
+      for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        checkFn(...sampleRgb(mid)) >= target ? lo = mid : hi = mid;
+      }
+      darkL = lo;
+    }
+
+    // Binary search toward light (L→100): find smallest L that passes
+    let lightL = null;
+    if (checkFn(...sampleRgb(100)) >= target) {
+      let lo = currentL, hi = 100;
+      for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        checkFn(...sampleRgb(mid)) >= target ? hi = mid : lo = mid;
+      }
+      lightL = hi;
+    }
+
+    let finalL = null;
+    if (darkL !== null && lightL !== null) {
+      finalL = (currentL - darkL) <= (lightL - currentL) ? darkL : lightL;
+    } else {
+      finalL = darkL ?? lightL;
+    }
+
+    if (finalL !== null) {
+      const [fr, fg, fb] = sampleRgb(finalL);
+      setTextColor(rgbToHex(fr, fg, fb));
+    }
+  };
 
   useEffect(() => {
     const onMove = (e) => {
-      if (isDraggingWheel||isDraggingLightness||isDraggingAlpha) e.preventDefault();
+      if (isDraggingWheel||isDraggingLightness) e.preventDefault();
       if (isDraggingWheel) {
         const el = document.querySelector('.rectangle-picker');
         if (el) {
@@ -800,21 +858,18 @@ const ColorPicker = () => {
           setSaturation(clamp(((e.clientX-rect.left)/rect.width)*100,0,100));
           setValue(clamp((1-(e.clientY-rect.top)/rect.height)*100,0,100));
         }
-      } else if (isDraggingAlpha && alphaSliderRef.current) {
-        updateAlphaFromClientY(alphaSliderRef.current, e.clientY);
       }
     };
-    const onUp = () => { setIsDraggingWheel(false); setIsDraggingLightness(false); setIsDraggingAlpha(false); };
-    const onSel = (e) => { if (isDraggingWheel||isDraggingLightness||isDraggingAlpha) e.preventDefault(); };
-    if (isDraggingWheel||isDraggingAlpha) window.addEventListener('mousemove', onMove);
+    const onUp = () => { setIsDraggingWheel(false); setIsDraggingLightness(false); };
+    const onSel = (e) => { if (isDraggingWheel||isDraggingLightness) e.preventDefault(); };
+    if (isDraggingWheel) window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     window.addEventListener('selectstart', onSel);
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); window.removeEventListener('selectstart', onSel); };
-  }, [isDraggingWheel, isDraggingLightness, isDraggingAlpha, updateAlphaFromClientY]);
+  }, [isDraggingWheel, isDraggingLightness]);
 
   const navItems = [
     { id: 'create',   label: 'Create',        icon: Palette },
-    { id: 'convert',  label: 'Convert',        icon: ArrowLeftRight },
     { id: 'palettes', label: 'Color Palettes', icon: LayoutGrid },
     { id: 'gradients',label: 'Gradients',      icon: Wand2 },
     { id: 'bulk',     label: 'Bulk Convert',   icon: FileCode },
@@ -930,12 +985,20 @@ const ColorPicker = () => {
 
                   {/* Alpha */}
                   <div className="flex items-center gap-3">
-                    <div className="flex-1 h-5 rounded-full cursor-pointer relative select-none border border-border"
-                      style={{ background:`linear-gradient(to right,transparent,${hex}),repeating-conic-gradient(#ccc 0% 25%,white 0% 50%) 50%/10px 10px` }}
-                      onMouseDown={e => { e.preventDefault(); const r=e.currentTarget.getBoundingClientRect(); setAlpha(Math.round(clamp(((e.clientX-r.left)/r.width)*100,0,100))); }}
-                      onMouseMove={e => { if(!e.buttons)return; const r=e.currentTarget.getBoundingClientRect(); setAlpha(Math.round(clamp(((e.clientX-r.left)/r.width)*100,0,100))); }}>
-                      <div className="absolute w-4 h-4 rounded-full border-2 border-white pointer-events-none"
-                        style={{ left:`${alphaValue}%`, top:'50%', transform:'translate(-50%,-50%)', backgroundColor:`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alphaValue/100})`, boxShadow:'0 0 0 1px rgba(0,0,0,0.2)' }} />
+                    <div className="flex-1 relative h-5">
+                      <div className="absolute inset-0 rounded-full overflow-hidden border border-border pointer-events-none"
+                        style={{ background:`linear-gradient(to right,transparent,${hex}),repeating-conic-gradient(#ccc 0% 25%,white 0% 50%) 50%/10px 10px` }} />
+                      <SliderPrimitive.Root
+                        value={[alphaValue]} min={0} max={100}
+                        onValueChange={([v]) => setAlpha(v)}
+                        className="relative flex items-center w-full h-full select-none touch-none">
+                        <SliderPrimitive.Track className="relative flex-1 h-full rounded-full bg-transparent">
+                          <SliderPrimitive.Range className="absolute h-full bg-transparent" />
+                        </SliderPrimitive.Track>
+                        <SliderPrimitive.Thumb
+                          className="block w-4 h-4 rounded-full border-2 border-white cursor-grab active:cursor-grabbing focus:outline-none focus-visible:ring-0"
+                          style={{ backgroundColor:`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alphaValue/100})`, boxShadow:'0 0 0 1px rgba(0,0,0,0.25)' }} />
+                      </SliderPrimitive.Root>
                     </div>
                     <span className="text-xs font-mono text-muted-foreground w-8 text-right">{alphaValue}%</span>
                   </div>
@@ -955,61 +1018,120 @@ const ColorPicker = () => {
                   {colorFormats.map(f => <FormatRow key={f.key} format={f} />)}
                 </div>
               </div>
-            </div>
-          )}
-
-          {/* ── Convert ── */}
-          {activeSection === 'convert' && (
-            <div className="p-8 max-w-2xl">
-              <h1 className="text-lg font-semibold text-foreground mb-1">Convert</h1>
-              <p className="text-sm text-muted-foreground mb-6">Edit any color value to update the current color across all formats.</p>
-
-              {/* Color preview */}
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-16 h-16 rounded-xl border border-border shrink-0"
-                  style={{ backgroundColor:`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alphaValue/100})`, backgroundImage:'repeating-conic-gradient(#e5e7eb 0% 25%,white 0% 50%) 50%/12px 12px' }} />
-                <div>
-                  <div className="text-2xl font-mono font-semibold text-foreground">{hex}</div>
-                  <div className="text-sm text-muted-foreground font-mono">oklch({oklch.l.toFixed(3)} {oklch.c.toFixed(3)} {oklch.h.toFixed(2)})</div>
-                </div>
-              </div>
-
-              <div className="bg-card rounded-xl border border-border p-5 mb-6">
-                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">All formats</h2>
-                {colorFormats.map(f => <FormatRow key={f.key} format={f} />)}
-              </div>
 
               {/* Contrast checker */}
-              <div className="bg-card rounded-xl border border-border p-5">
-                <div className="flex items-center justify-between mb-4">
+              <div className="bg-card rounded-xl border border-border mt-6 overflow-hidden">
+                <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-border">
                   <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Contrast checker</h2>
-                  <div className="flex bg-muted rounded-lg p-0.5">
-                    {['wcag2','apca'].map(algo => (
-                      <button key={algo} onClick={() => setContrastAlgorithm(algo)}
-                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${contrastAlgorithm===algo?'bg-white dark:bg-gray-700 text-foreground shadow-sm':'text-muted-foreground hover:text-foreground'}`}>
-                        {algo.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 mb-4">
-                  <input type="color" value={bgColor} onChange={e=>setBgColor(e.target.value)}
-                    className="w-10 h-10 rounded-lg cursor-pointer border border-border" />
-                  <input type="text" value={bgColor} onChange={e=>setBgColor(e.target.value)}
-                    className="flex-1 px-3 py-2 text-sm font-mono border border-border bg-card text-foreground rounded-lg focus:outline-none focus:ring-1 focus:ring-ring" />
-                  <div className="text-right">
-                    <div className="text-2xl font-bold font-mono text-foreground">
-                      {contrastAlgorithm==='wcag2' ? `${contrastRatio.toFixed(2)}:1` : `${apcaValue.toFixed(1)}`}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-center h-7 px-3 rounded text-xs font-semibold select-none border border-border"
+                      style={{ backgroundColor: bgColor, color: textColor }}>
+                      Text
                     </div>
-                    <div className={`text-xs font-semibold ${contrastResult.color}`}>{contrastResult.text}</div>
+                    <div className="flex bg-muted rounded-lg p-0.5">
+                      {['wcag2','apca'].map(algo => (
+                        <button key={algo} onClick={() => setContrastAlgorithm(algo)}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${contrastAlgorithm===algo?'bg-white dark:bg-gray-700 text-foreground shadow-sm':'text-muted-foreground hover:text-foreground'}`}>
+                          {algo.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                <div className="p-4 rounded-lg border border-border"
-                  style={{ backgroundColor:bgColor, backgroundImage:(alphaValue<100||parsedBg.alpha<1)?'repeating-conic-gradient(#e5e7eb 0% 25%,white 0% 50%) 50%/16px 16px':'none' }}>
-                  <p className="text-sm mb-1.5" style={{ color:`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alphaValue/100})` }}>Normal text (16px) — The quick brown fox jumps over the lazy dog</p>
-                  <p className="text-lg font-semibold" style={{ color:`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alphaValue/100})` }}>Large text (18px bold) — The quick brown fox</p>
+                {/* Two color swatches */}
+                <div className="flex">
+                  {[
+                    { label: 'Text', color: textColor, setColor: setTextColor, ref: textColorInputRef },
+                    { label: 'Background', color: bgColor, setColor: setBgColor, ref: bgColorInputRef },
+                  ].map(({ label, color, setColor, ref }, i) => {
+                    const p = parseBgColor(color);
+                    const lum = getLuminance(...p.rgb);
+                    const iconColor = lum > 0.35 ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.6)';
+                    return (
+                      <div key={label} className={`flex-1 ${i === 0 ? 'border-r border-border' : ''}`}>
+                        <div className="relative h-24 cursor-pointer select-none"
+                          style={{ backgroundColor: color }}
+                          onClick={() => ref.current?.click()}>
+                          <Pipette className="absolute inset-0 m-auto w-5 h-5 pointer-events-none" style={{ color: iconColor }} />
+                          <input ref={ref} type="color" value={color.length === 7 ? color : '#000000'}
+                            onChange={e => setColor(e.target.value)}
+                            className="sr-only" />
+                        </div>
+                        <div className="border-t border-border px-3 py-2">
+                          <input type="text" value={color}
+                            onChange={e => setColor(e.target.value)}
+                            className="w-full text-sm font-mono bg-transparent focus:outline-none text-foreground" />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Ratio */}
+                <div className="text-center py-5 border-t border-border">
+                  <div className="text-5xl font-bold font-mono text-foreground leading-none mb-1.5">
+                    {contrastAlgorithm === 'wcag2' ? `${contrastRatio.toFixed(2)}:1` : Math.abs(apcaValue).toFixed(0)}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {contrastAlgorithm === 'wcag2' ? 'Simple Contrast (WCAG)' : 'Perceptual Contrast (APCA)'}
+                  </div>
+                </div>
+
+                {/* Results grid */}
+                <div className="border-t border-border px-5 py-4">
+                  {contrastAlgorithm === 'wcag2' ? (
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                      {[
+                        { col: 'Normal Text', rows: [{ label: 'AA', threshold: 4.5 }, { label: 'AAA', threshold: 7 }] },
+                        { col: 'Large Text',  rows: [{ label: 'AA', threshold: 3  }, { label: 'AAA', threshold: 4.5 }] },
+                      ].map(({ col, rows }) => (
+                        <div key={col}>
+                          <div className="text-xs font-semibold text-foreground mb-2">{col}</div>
+                          {rows.map(({ label, threshold }) => {
+                            const pass = contrastRatio >= threshold;
+                            return (
+                              <div key={label} className="flex items-center gap-2 py-1">
+                                <span className={`text-base leading-none ${pass ? 'text-green-500' : 'text-red-500'}`}>
+                                  {pass ? '✓' : '✗'}
+                                </span>
+                                <span className="text-sm font-semibold text-foreground w-8">{label}</span>
+                                <span className="text-sm text-muted-foreground">{threshold}:1</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                      {[
+                        [{ label: 'Large text', threshold: 45 }, { label: 'Fluent text', threshold: 60 }],
+                        [{ label: 'Body text',  threshold: 75 }, { label: 'Preferred',   threshold: 90 }],
+                      ].map((col, ci) => (
+                        <div key={ci}>
+                          {col.map(({ label, threshold }) => {
+                            const pass = Math.abs(apcaValue) >= threshold;
+                            return (
+                              <div key={label} className="flex items-center gap-2 py-1">
+                                <span className={`text-base leading-none ${pass ? 'text-green-500' : 'text-red-500'}`}>
+                                  {pass ? '✓' : '✗'}
+                                </span>
+                                <span className="text-sm text-foreground flex-1">{label}</span>
+                                <span className="text-sm text-muted-foreground">{threshold}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(contrastAlgorithm === 'wcag2' ? contrastRatio < 7 : Math.abs(apcaValue) < 90) && (
+                    <button onClick={fixContrast}
+                      className="mt-4 w-full py-2 text-sm font-medium rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                      Fix contrast
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
